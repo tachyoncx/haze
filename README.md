@@ -1,13 +1,13 @@
 ## Haze
 ### About
-Given an arbitrary number of hosts, Haze generates (rather, *will* generate) the wg0.conf files needed for a full mesh topology. Each host is assigned a private address from the desired subnet, a keypair, and made aware of peers' addresses and public keys. Additionally, for each pair of peers, it generates and assigns a unique preshared key.
+Given an arbitrary number of hosts, Haze generates (rather, *will* generate) the wg0.conf files needed for a full mesh topology. Each host is assigned a private address from the desired subnet, a keypair, and is made aware of peers' addresses and public keys. Additionally, for each pair of peers, it generates and assigns a unique preshared key.
 
 ### To-do
 - Expand on the tests for existing functions 
 - Finish generating the fully-formed wg0.confs (currently prints the information to stdout)
 - Add option to encrypt the config outputs with a password
     - AES-256/PBKDF2-SHA3-512 500k
-    - Instead of encrypted_blob.txt, output a Python script with the ciphertext inline as a variable. Use python/cryptography to read in the blobvar, request a user password, derive the key, and decrypt directly to wg0.conf.
+    - Instead of encrypted_blob.txt, output a Python script with the ciphertext inline as a variable. Use python/cryptography to read in the blobvar, request a user password, derive the key, and decrypt directly to /etc/wg0.conf.
 - Add option to generate all the scp commands needed to transport configs to each server
 
 ### Expected functionality
