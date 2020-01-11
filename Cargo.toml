@@ -1,0 +1,19 @@
+[package]
+name = "haze"
+version = "0.1.0"
+authors = ["= <elliptic@tachyon.cx>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+base64 = "0.11.0"
+colored = "1.9"
+clap = "2.33.0"
+ipnet = "2.1.0"
+itertools = "0.8.2"
+x25519-dalek = "0.6.0"
+
+[dependencies.rand_core]
+version = "0.5.1"
+features = ["std"]
