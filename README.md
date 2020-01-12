@@ -1,6 +1,6 @@
 ## Haze (Work in Progress)
 ### About
-Given an arbitrary number of WireGuard hosts, Haze generates (rather, *will* generate) the wg0.conf files needed for a full mesh topology. Each host is assigned a private address from the desired subnet, a keypair, and is made aware of peers' addresses and public keys. Additionally, for each pair of peers, it generates and assigns a unique preshared key.
+Given an arbitrary number of WireGuard hosts, Haze generates (rather, *will* generate) the wg0.conf and key files needed for a full mesh topology. Each host is assigned a private address from the desired subnet, a keypair, and is made aware of peers' addresses and public keys. Additionally, for each pair of peers, it generates and assigns a unique preshared key.
 
 ### Example Four-Node Topology
 ![Four-node topology](/resources/haze_1.png)
