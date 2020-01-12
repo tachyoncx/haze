@@ -9,11 +9,6 @@ use itertools::Itertools;
 use rand_core::{OsRng, RngCore};
 use x25519_dalek::{PublicKey, StaticSecret};
 
-// Today I learned that factorials overflow quickly.
-// Here's another way to calculate the number of combinations
-// without using factorials.
-// https://stackoverflow.com/a/12130280
-
 #[derive(Debug, Clone)]
 struct HostConfig {
     endpoint_addr: SocketAddrV4,
@@ -43,15 +38,62 @@ impl PartialEq for HostPeer {
     }
 }
 
-fn hl_host<T: ToString>(item: T) -> String {
-    format!("{}", item.to_string().green())
+// Today I learned that factorials overflow quickly.
+// Here's another way to calculate the number of combinations
+// without using factorials.
+// https://stackoverflow.com/a/12130280
+fn calc_combinations(mut n: usize, r: usize) -> Result<usize, String> {
+    if r > n {
+        return Err(String::from("Error calculating host combinations."));
+    }
+
+    let mut combos = 1;
+    for i in 1..=r {
+        combos *= n;
+        n -= 1;
+        combos /= i;
+    }
+    Ok(combos)
 }
 
-fn hl_peer<T: ToString>(item: T) -> String {
-    format!("{}", item.to_string().cyan())
+fn confirmation_display(host_configs: &[HostConfig]) {
+    for (i, host) in host_configs.iter().enumerate() {
+        println!("\n\n{:^80}", format!("[ Host {} ]", i + 1).bold());
+        println!(
+            "Public address: {:<40}Private address: {:<40}",
+            hl_host(&host.endpoint_addr),
+            hl_host(&host.priv_addr)
+        );
+        println!("Public key: {}", hl_host(&host.pub_key));
+        println!("Private key: {}", hl_host(&format!("{:*<42}", "")));
+
+        for (i, peer) in host.peers.iter().enumerate() {
+            println!("\n\t{}", format!("[ Peer {} ]", i + 1).bold());
+            println!(
+                "\tPublic address: {:<32}Private address: {:<40}",
+                hl_peer(&peer.endpoint_addr),
+                hl_peer(&peer.priv_addr)
+            );
+            println!("\tPublic key: {}", hl_peer(&peer.pub_key));
+            println!("\tPreshared key: {}", hl_peer(&format!("{:*<42}", "")));
+        }
+    }
 }
 
-fn gen_configs(pub_ips: Vec<Ipv4Addr>, priv_subnet: Ipv4Net, port: u16) -> Vec<HostConfig> {
+fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, String> {
+    let mut ip_addresses: Vec<Ipv4Addr> = Vec::new();
+    for ip_address in subnet.hosts() {
+        ip_addresses.push(ip_address);
+    }
+
+    if ip_addresses.len() < host_count {
+        return Err(String::from("Subnet too small for hosts specified."));
+    }
+
+    Ok(ip_addresses)
+}
+
+fn gen_configs(pub_ips: &[Ipv4Addr], priv_subnet: Ipv4Net, port: u16) -> Vec<HostConfig> {
     let host_count = pub_ips.len();
     let mut priv_addresses = enum_subnet(host_count, priv_subnet).unwrap();
     priv_addresses.truncate(host_count);
@@ -89,14 +131,14 @@ fn gen_configs(pub_ips: Vec<Ipv4Addr>, priv_subnet: Ipv4Net, port: u16) -> Vec<H
         paired_configs.push((peer_0, peer_1));
     }
 
-    for pair in paired_configs.iter() {
+    for pair in &paired_configs {
         let (peer_0, peer_1) = pair;
-        for i in 0..hosts.len() {
-            if hosts[i].endpoint_addr == peer_1.endpoint_addr {
-                hosts[i].push_peer(peer_0.clone());
+        for host in &mut hosts {
+            if host.endpoint_addr == peer_1.endpoint_addr {
+                host.push_peer(peer_0.clone());
             }
-            if hosts[i].endpoint_addr == peer_0.endpoint_addr {
-                hosts[i].push_peer(peer_1.clone());
+            if host.endpoint_addr == peer_0.endpoint_addr {
+                host.push_peer(peer_1.clone());
             }
         }
     }
@@ -104,53 +146,15 @@ fn gen_configs(pub_ips: Vec<Ipv4Addr>, priv_subnet: Ipv4Net, port: u16) -> Vec<H
     hosts
 }
 
-fn calc_combinations(mut n: usize, r: usize) -> Result<usize, String> {
-    if r > n {
-        return Err(String::from("Error calculating host combinations."));
-    }
-
-    let mut combos = 1;
-    for i in 1..=r {
-        combos *= n;
-        n = n - 1;
-        combos /= i;
-    }
-    Ok(combos)
-}
-
-fn confirmation_display(host_configs: &Vec<HostConfig>) {
-    for (i, host) in host_configs.iter().enumerate() {
-        println!("\n\n{:^80}", format!("[ Host {} ]", i + 1).bold());
-        println!(
-            "Public address: {:<40}Private address: {:<40}",
-            hl_host(host.endpoint_addr),
-            hl_host(host.priv_addr)
-        );
-        println!("Public key: {}", hl_host(&host.pub_key));
-        println!("Private key: {}", hl_host(format!("{:*<42}", "")));
-
-        for (i, peer) in host.peers.iter().enumerate() {
-            println!("\n\t{}", format!("[ Peer {} ]", i + 1).bold());
-            println!(
-                "\tPublic address: {:<32}Private address: {:<40}",
-                hl_peer(peer.endpoint_addr),
-                hl_peer(peer.priv_addr)
-            );
-            println!("\tPublic key: {}", hl_peer(&peer.pub_key));
-            println!("\tPreshared key: {}", hl_peer(format!("{:*<42}", "")));
-        }
-    }
-}
-
 fn gen_preshared_keys(host_pair_count: usize) -> Result<Vec<String>, String> {
     let mut keys: Vec<String> = Vec::with_capacity(host_pair_count);
     for _ in 0..host_pair_count {
-        let mut key: [u8; 32] = [0u8; 32];
+        let mut key: [u8; 32] = [0_u8; 32];
         OsRng.fill_bytes(&mut key);
         keys.push(base64::encode(&key));
     }
 
-    if keys.len() < 1 {
+    if keys.is_empty() {
         return Err(String::from("Error generating preshared keys."));
     }
     Ok(keys)
@@ -168,47 +172,45 @@ fn gen_x25519_keypairs(host_count: usize) -> Result<Vec<(String, String)>, Strin
         keypairs.push(keypair);
     }
 
-    if keypairs.len() < 1 {
+    if keypairs.is_empty() {
         return Err(String::from("Error generating keypairs."));
     }
     Ok(keypairs)
 }
 
-fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, String> {
-    let mut ip_addresses: Vec<Ipv4Addr> = Vec::new();
-    for ip_address in subnet.hosts() {
-        ip_addresses.push(ip_address);
-    }
-
-    if ip_addresses.len() < host_count {
-        return Err(String::from("Subnet too small for hosts specified."));
-    }
-
-    Ok(ip_addresses)
+fn hl_host<T: ToString>(item: &T) -> String {
+    format!("{}", item.to_string().green())
 }
 
+fn hl_peer<T: ToString>(item: &T) -> String {
+    format!("{}", item.to_string().cyan())
+}
+
+// Is this input string an IP?
 fn is_ip(val: String) -> Result<(), String> {
-    if let Ok(_) = val.parse::<Ipv4Addr>() {
+    if val.parse::<Ipv4Addr>().is_ok() {
         Ok(())
     } else {
         Err(String::from("Error parsing IP address"))
     }
 }
 
+// Is this input string a port?
 fn is_port(val: String) -> Result<(), String> {
     if let Ok(integer) = val.parse::<u32>() {
         if (integer > 0) && (integer < 65536) {
             Ok(())
         } else {
-            Err(String::from("The value must be between 0 and 65535"))
+            Err(String::from("The value must be between 1 and 65535"))
         }
     } else {
         Err(String::from("Unable to parse port"))
     }
 }
 
+// Is this input string a subnet?
 fn is_subnet(val: String) -> Result<(), String> {
-    if let Ok(_) = val.parse::<Ipv4Net>() {
+    if val.parse::<Ipv4Net>().is_ok() {
         Ok(())
     } else {
         Err(String::from("Error parsing subnet"))
@@ -321,7 +323,7 @@ fn main() {
         );
     }
 
-    let configs = gen_configs(pub_ips, priv_subnet, pub_port);
+    let configs = gen_configs(&pub_ips, priv_subnet, pub_port);
 
     if !matches.is_present("no_confirm") {
         confirmation_display(&configs);
@@ -344,6 +346,18 @@ mod tests {
         }
     }
 
+    macro_rules! expected_return_amounts_enum_subnet {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            fn $name() {
+                let (q, r) = $value;
+                assert_eq!(q, enum_subnet(0, r.parse::<Ipv4Net>().unwrap()).unwrap().len());
+            }
+        )*
+        }
+    }
+
     macro_rules! expected_return_amounts_psk {
         ($($name:ident: $value:expr,)*) => {
         $(
@@ -354,6 +368,54 @@ mod tests {
             }
         )*
         }
+    }
+
+    macro_rules! expected_return_amounts_x25519 {
+        ($($name:ident: $value:expr,)*) => {
+        $(
+            #[test]
+            fn $name() {
+                let q = $value;
+                assert_eq!(q, gen_x25519_keypairs(q).unwrap().len());
+            }
+        )*
+        }
+    }
+
+    macro_rules! is_ip_works_correctly {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (q, r) = $value;
+                    assert_eq!(r, is_ip(String::from(q)));
+                }
+            )*
+            }
+    }
+
+    macro_rules! is_port_works_correctly {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (q, r) = $value;
+                    assert_eq!(r, is_port(String::from(q)));
+                }
+            )*
+            }
+    }
+
+    macro_rules! is_subnet_works_correctly {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (q, r) = $value;
+                    assert_eq!(r, is_subnet(String::from(q)));
+                }
+            )*
+            }
     }
 
     macro_rules! psk_does_not_repeat {
@@ -375,55 +437,83 @@ mod tests {
         }
     }
 
-    macro_rules! expected_return_amounts_x25519 {
-        ($($name:ident: $value:expr,)*) => {
-        $(
-            #[test]
-            fn $name() {
-                let q = $value;
-                assert_eq!(q, gen_x25519_keypairs(q).unwrap().len());
-            }
-        )*
-        }
-    }
-
     // Ensure calc_combinations() is correct.
     // Tuple: (population, sample, expected combinations)
     comb_tests! {
-    combinatations_zero_and_zero: (0, 0, 1),
-    combinatations_three_and_two: (3, 2, 3),
-    combinatations_seven_and_two: (7, 2, 21),
-    combinatations_twelve_and_two: (12, 2, 66),
-    combinatations_twenty_and_two: (20, 2, 190),
+        fn_calc_combos_0_and_0: (0, 0, 1),
+        fn_calc_combos_3_and_2: (3, 2, 3),
+        fn_calc_combos_7_and_2: (7, 2, 21),
+        fn_calc_combos_12_and_2: (12, 2, 66),
+        fn_calc_combos_20_and_2: (20, 2, 190),
     }
 
-    // Make sure gen_preshared_keys() generates
-    // unique output (no duplicate keys)
-    psk_does_not_repeat! {
-        gen_two_psk_no_repeats: 2,
-        gen_four_psk_no_repeats: 4,
-        gen_six_psk_no_repeats: 6,
-        gen_eight_psk_no_repeats: 8,
-        gen_sixteen_psk_no_repeats: 16,
+    // Ensure that enumerating a subnet returns the expected
+    // number of hosts
+    expected_return_amounts_enum_subnet! {
+        fn_enum_subnet_slash24_is_254: (254, "10.0.0.0/24"),
+        fn_enum_subnet_slash25_is_126: (126, "10.0.0.0/25"),
+        fn_enum_subnet_slash27_is_30: (30, "10.0.0.0/27"),
+        fn_enum_subnet_slash28_is_14: (14, "10.0.0.0/28"),
+        fn_enum_subnet_slash29_is_6: (6, "10.0.0.0/29"),
     }
 
     // Make sure that given x, gen_preshared_keys()
     // returns x keys
     expected_return_amounts_psk! {
-        gen_psk_one_returns_one: 1,
-        gen_psk_three_returns_three: 3,
-        gen_psk_five_returns_five: 5,
-        gen_psk_eight_returns_eight: 8,
-        gen_psk_sixteen_returns_sixteen: 16,
+        fn_gen_psk_1_returns_1: 1,
+        fn_gen_psk_3_returns_3: 3,
+        fn_gen_psk_5_returns_5: 5,
+        fn_gen_psk_8_returns_8: 8,
+        fn_gen_psk_16_returns_16: 16,
     }
 
     // Make sure that given x, gen_x25519_keypairs()
     // returns x keys
     expected_return_amounts_x25519! {
-        gen_x25519_one_returns_one: 1,
-        gen_x25519_three_returns_three: 3,
-        gen_x25519_five_returns_five: 5,
-        gen_x25519_eight_returns_eight: 8,
-        gen_x25519_sixteen_returns_sixteen: 16,
+        fn_gen_x25519_1_returns_1: 1,
+        fn_gen_x25519_3_returns_3: 3,
+        fn_gen_x25519_5_returns_5: 5,
+        fn_gen_x25519_8_returns_8: 8,
+        fn_gen_x25519_16_returns_16: 16,
+    }
+
+    // Verifies is_ip() properly identifies input as correct
+    // or incorrect
+    is_ip_works_correctly! {
+        fn_is_ip_rfc_1918a: ("10.0.0.0", Ok(()) ),
+        fn_is_ip_rfc_1918b: ("172.16.0.0", Ok(()) ),
+        fn_is_ip_rfc_1918c: ("192.168.0.0", Ok(()) ),
+        fn_is_ip_invalid_octet: ("192.168.256.0", Err(String::from("Error parsing IP address"))),
+        fn_is_ip_extra_octet: ("192.168.256.0.0", Err(String::from("Error parsing IP address"))),
+    }
+
+    // Verifies is_port() properly identifies input as correct
+    // or incorrect
+    is_port_works_correctly! {
+        fn_is_port_256: ("256", Ok(()) ),
+        fn_is_port_2048: ("2048", Ok(()) ),
+        fn_is_port_65535: ("65535", Ok(()) ),
+        fn_is_port_65536: ("65536", Err(String::from("The value must be between 1 and 65535"))),
+        fn_is_port_0: ("0", Err(String::from("The value must be between 1 and 65535"))),
+    }
+
+    // Verifies is_subnet() properly identifies input as correct
+    // or incorrect
+    is_subnet_works_correctly! {
+        fn_is_subnet_rfc1918a: ("10.0.0.0/8", Ok(()) ),
+        fn_is_subnet_rfc1918b: ("172.16.0.0/12", Ok(()) ),
+        fn_is_subnet_rfc1918c: ("192.168.0.0/16", Ok(()) ),
+        fn_is_subnet_invalid_octet: ("11.11.256.0/8", Err(String::from("Error parsing subnet"))),
+        fn_is_subnet_invalid_prefix: ("11.11.11.0/33", Err(String::from("Error parsing subnet"))),
+    }
+
+    // Make sure gen_preshared_keys() generates
+    // unique output (no dupliate keys)
+    psk_does_not_repeat! {
+        fn_gen_psk_chk_2_no_repeats: 2,
+        fn_gen_psk_chk_4_no_repeats: 4,
+        fn_gen_psk_chk_6_no_repeats: 6,
+        fn_gen_psk_chk_8_no_repeats: 8,
+        fn_gen_psk_chk_16_no_repeats: 16,
     }
 }
