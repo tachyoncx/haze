@@ -2,6 +2,9 @@
 ### About
 Given an arbitrary number of hosts, Haze generates (rather, *will* generate) the wg0.conf files needed for a full mesh topology. Each host is assigned a private address from the desired subnet, a keypair, and is made aware of peers' addresses and public keys. Additionally, for each pair of peers, it generates and assigns a unique preshared key.
 
+### Example Four-Node Topology
+![Four-node topology](/resources/haze_1.png)
+
 ### To-do
 - Expand on the tests for existing functions 
 - Finish generating the fully-formed wg0.confs (currently prints the information to stdout)
