@@ -9,6 +9,7 @@ edition = "2018"
 [dependencies]
 base64 = "0.11.0"
 colored = "1.9"
+chrono = "0.4.10"
 clap = "2.33.0"
 ipnet = "2.1.0"
 itertools = "0.8.2"

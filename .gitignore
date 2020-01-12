@@ -1,2 +1,5 @@
 /target
 **/*.rs.bk
+/haze-configs
+/haze-configs/*
+.DS_Store

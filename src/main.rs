@@ -1,7 +1,10 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
+use std::path::{Path, PathBuf};
 use std::process;
+use std::{fs, path};
 
 use base64;
+use chrono::Local;
 use clap::{App, Arg};
 use colored::*;
 use ipnet::Ipv4Net;
@@ -57,26 +60,74 @@ fn calc_combinations(mut n: usize, r: usize) -> Result<usize, String> {
     Ok(combos)
 }
 
+fn check_and_create_conf_dir(dir_name: &str) -> Result<PathBuf, String> {
+    let time = time_now();
+    let path = path::Path::new(dir_name).join(time);
+
+    if let Err(e) = fs::DirBuilder::new().recursive(true).create(&path) {
+        println!("{}", e);
+        return Err(String::from(
+            "Error creating directory configuration directory",
+        ));
+    }
+
+    Ok(path)
+}
+
+fn check_and_create_conf_file(dir: &PathBuf, file: &str, text: &str) -> Result<String, String> {
+    let path = Path::new(dir).join(file);
+
+    if path.exists() {
+        return Err(String::from("Configuration file already exists"));
+    } else if fs::write(path, text).is_err() {
+        return Err(String::from("Error creating configuration file"));
+    }
+
+    Ok(file.to_string())
+}
+
+fn create_config_files(
+    config_text: &str,
+    host_id: SocketAddrV4,
+) -> Result<(PathBuf, String), String> {
+    let filename = host_id.ip().to_string().replace(".", "") + "-wg0.conf";
+    println!("{}", filename);
+
+    let dir = match check_and_create_conf_dir("haze_configs") {
+        Ok(d) => d,
+        Err(e) => return Err(e),
+    };
+
+    let file = match check_and_create_conf_file(&dir, &filename, &config_text) {
+        Ok(f) => f,
+        Err(e) => return Err(e),
+    };
+
+    Ok((dir, file))
+}
+
 fn confirmation_display(host_configs: &[HostConfig]) -> Result<(), String> {
     for (i, host) in host_configs.iter().enumerate() {
         println!("\n\n{:^80}", format!("[ Host {} ]", i + 1).bold());
         println!(
-            "Public address: {:<40}Private address: {:<40}",
+            "Public address: {:<48}Private address: {:<22}",
             hl_one(&host.endpoint_addr),
             hl_one(&host.priv_addr)
         );
-        println!("Public key: {}", hl_one(&host.pub_key));
-        println!("Private key: {}", hl_one(&format!("{:*<42}", "")));
+        println!(
+            "Public key: {:<40}\nPrivate key: {:<40}",
+            hl_one(&host.pub_key),
+            hl_one(&"** Hidden** ")
+        );
 
         for (i, peer) in host.peers.iter().enumerate() {
             println!("\n\t{}", format!("[ Peer {} ]", i + 1).bold());
             println!(
-                "\tPublic address: {:<32}Private address: {:<40}",
+                "\tPublic address: {:<40}Private address: {}\n\tPublic key: {:<40}\n\tPreshared key: {:<40}",
                 hl_two(&peer.endpoint_addr),
-                hl_two(&peer.priv_addr)
-            );
-            println!("\tPublic key: {}", hl_two(&peer.pub_key));
-            println!("\tPreshared key: {}", hl_two(&format!("{:*<42}", "")));
+                hl_two(&peer.priv_addr),
+                hl_two(&peer.pub_key),
+                hl_two(&"** Hidden **"));
         }
     }
     if let Ok(response) = prompt_password_stdout("\nDoes everything look OK? (y/n) ") {
@@ -249,7 +300,9 @@ fn is_subnet(val: String) -> Result<(), String> {
         Err(String::from("Error parsing subnet"))
     }
 }
-
+fn time_now() -> String {
+    Local::now().format("%a-%H-%M").to_string()
+}
 fn main() {
     let matches = App::new("Haze")
         .version("0.1")
@@ -365,11 +418,13 @@ fn main() {
         }
     }
 
-    for (i, config) in configs.iter().enumerate() {
-        if i % 2 == 0 {
-            println!("{}", hl_one(&gen_config_text(&config)));
-        } else {
-            println!("{}", hl_two(&gen_config_text(&config)));
+    for config in &configs {
+        match create_config_files(&gen_config_text(&config), config.endpoint_addr) {
+            Ok((dir, file)) => println!("Created {} in {}", file, dir.display()),
+            Err(e) => {
+                println!("{}", e);
+                process::exit(1);
+            }
         }
     }
 }
