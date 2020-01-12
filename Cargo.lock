@@ -115,6 +115,7 @@ dependencies = [
  "ipnet 2.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.8.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rand_core 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)",
+ "rpassword 4.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "x25519-dalek 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
@@ -171,6 +172,15 @@ version = "0.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 dependencies = [
  "getrandom 0.1.14 (registry+https://github.com/rust-lang/crates.io-index)",
+]
+
+[[package]]
+name = "rpassword"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+dependencies = [
+ "libc 0.2.66 (registry+https://github.com/rust-lang/crates.io-index)",
+ "winapi 0.3.8 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]
@@ -307,6 +317,7 @@ dependencies = [
 "checksum proc-macro2 1.0.7 (registry+https://github.com/rust-lang/crates.io-index)" = "0319972dcae462681daf4da1adeeaa066e3ebd29c69be96c6abb1259d2ee2bcc"
 "checksum quote 1.0.2 (registry+https://github.com/rust-lang/crates.io-index)" = "053a8c8bcc71fcce321828dc897a98ab9760bef03a4fc36693c231e5b3216cfe"
 "checksum rand_core 0.5.1 (registry+https://github.com/rust-lang/crates.io-index)" = "90bde5296fc891b0cef12a6d03ddccc162ce7b2aff54160af9338f8d40df6d19"
+"checksum rpassword 4.0.3 (registry+https://github.com/rust-lang/crates.io-index)" = "d59f0e97173c514b9036cd450c195a6483ba81055c6fa0f1bff3ab563f47d44a"
 "checksum strsim 0.8.0 (registry+https://github.com/rust-lang/crates.io-index)" = "8ea5119cdb4c55b55d432abb513a0429384878c15dde60cc77b1c99de1a95a6a"
 "checksum subtle 2.2.2 (registry+https://github.com/rust-lang/crates.io-index)" = "7c65d530b10ccaeac294f349038a597e435b18fb456aadd0840a623f83b9e941"
 "checksum syn 1.0.13 (registry+https://github.com/rust-lang/crates.io-index)" = "1e4ff033220a41d1a57d8125eab57bf5263783dfdcc18688b1dacc6ce9651ef8"

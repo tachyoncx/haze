@@ -7,6 +7,7 @@ use colored::*;
 use ipnet::Ipv4Net;
 use itertools::Itertools;
 use rand_core::{OsRng, RngCore};
+use rpassword::prompt_password_stdout;
 use x25519_dalek::{PublicKey, StaticSecret};
 
 #[derive(Debug, Clone)]
@@ -56,27 +57,38 @@ fn calc_combinations(mut n: usize, r: usize) -> Result<usize, String> {
     Ok(combos)
 }
 
-fn confirmation_display(host_configs: &[HostConfig]) {
+fn confirmation_display(host_configs: &[HostConfig]) -> Result<(), String> {
     for (i, host) in host_configs.iter().enumerate() {
         println!("\n\n{:^80}", format!("[ Host {} ]", i + 1).bold());
         println!(
             "Public address: {:<40}Private address: {:<40}",
-            hl_host(&host.endpoint_addr),
-            hl_host(&host.priv_addr)
+            hl_one(&host.endpoint_addr),
+            hl_one(&host.priv_addr)
         );
-        println!("Public key: {}", hl_host(&host.pub_key));
-        println!("Private key: {}", hl_host(&format!("{:*<42}", "")));
+        println!("Public key: {}", hl_one(&host.pub_key));
+        println!("Private key: {}", hl_one(&format!("{:*<42}", "")));
 
         for (i, peer) in host.peers.iter().enumerate() {
             println!("\n\t{}", format!("[ Peer {} ]", i + 1).bold());
             println!(
                 "\tPublic address: {:<32}Private address: {:<40}",
-                hl_peer(&peer.endpoint_addr),
-                hl_peer(&peer.priv_addr)
+                hl_two(&peer.endpoint_addr),
+                hl_two(&peer.priv_addr)
             );
-            println!("\tPublic key: {}", hl_peer(&peer.pub_key));
-            println!("\tPreshared key: {}", hl_peer(&format!("{:*<42}", "")));
+            println!("\tPublic key: {}", hl_two(&peer.pub_key));
+            println!("\tPreshared key: {}", hl_two(&format!("{:*<42}", "")));
         }
+    }
+    if let Ok(response) = prompt_password_stdout("\nDoes everything look OK? (y/n) ") {
+        match &response.to_ascii_lowercase()[..1] {
+            "y" => Ok(()),
+            "n" => Err(String::from("Cancelling...")),
+            _ => Err(String::from("Unable to interpret input")),
+        }
+    } else {
+        Err(String::from(
+            "Error encountered while requesting user confirmation.",
+        ))
     }
 }
 
@@ -93,7 +105,26 @@ fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, Stri
     Ok(ip_addresses)
 }
 
-fn gen_configs(pub_ips: &[Ipv4Addr], priv_subnet: Ipv4Net, port: u16) -> Vec<HostConfig> {
+fn gen_config_text(host_conf: &HostConfig) -> String {
+    let addr_line = format!("Address = {}", host_conf.priv_addr);
+    let key_line = format!("PrivateKey = {}", host_conf.priv_key);
+    let port_line = format!("ListenPort = {}", host_conf.endpoint_addr.port());
+    let mut text = format!("[Interface]\n{}\n{}\n{}\n", addr_line, key_line, port_line);
+
+    for peer in &host_conf.peers {
+        let key_line = format!("PublicKey = {}", peer.pub_key);
+        let psk_line = format!("PreSharedKey = {}", peer.preshared_key);
+        let endpnt_line = format!("Endpoint = {}", peer.endpoint_addr);
+        let addr_line = format!("AllowedIPs = {}/32", peer.priv_addr);
+        text = format!(
+            "{}\n[Peer]\n{}\n{}\n{}\n{}\n",
+            text, key_line, psk_line, endpnt_line, addr_line
+        );
+    }
+    text
+}
+
+fn gen_host_configs(pub_ips: &[Ipv4Addr], priv_subnet: Ipv4Net, port: u16) -> Vec<HostConfig> {
     let host_count = pub_ips.len();
     let mut priv_addresses = enum_subnet(host_count, priv_subnet).unwrap();
     priv_addresses.truncate(host_count);
@@ -178,11 +209,13 @@ fn gen_x25519_keypairs(host_count: usize) -> Result<Vec<(String, String)>, Strin
     Ok(keypairs)
 }
 
-fn hl_host<T: ToString>(item: &T) -> String {
+// Highlight color to help visually parse output
+fn hl_one<T: ToString>(item: &T) -> String {
     format!("{}", item.to_string().green())
 }
 
-fn hl_peer<T: ToString>(item: &T) -> String {
+// Another highlight color to help visually parse output
+fn hl_two<T: ToString>(item: &T) -> String {
     format!("{}", item.to_string().cyan())
 }
 
@@ -231,7 +264,7 @@ fn main() {
                 .multiple(true)
                 .required(true)
                 .require_equals(true)
-                .require_delimiter(true)
+                .value_delimiter(",")
                 .validator(is_ip),
         )
         .arg(
@@ -323,10 +356,21 @@ fn main() {
         );
     }
 
-    let configs = gen_configs(&pub_ips, priv_subnet, pub_port);
+    let configs = gen_host_configs(&pub_ips, priv_subnet, pub_port);
 
     if !matches.is_present("no_confirm") {
-        confirmation_display(&configs);
+        if let Err(e) = confirmation_display(&configs) {
+            println!("{}", e);
+            process::exit(1);
+        }
+    }
+
+    for (i, config) in configs.iter().enumerate() {
+        if i % 2 == 0 {
+            println!("{}", hl_one(&gen_config_text(&config)));
+        } else {
+            println!("{}", hl_two(&gen_config_text(&config)));
+        }
     }
 }
 

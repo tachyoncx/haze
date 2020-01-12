@@ -12,6 +12,7 @@ colored = "1.9"
 clap = "2.33.0"
 ipnet = "2.1.0"
 itertools = "0.8.2"
+rpassword = "4.0.3"
 x25519-dalek = "0.6.0"
 
 [dependencies.rand_core]
