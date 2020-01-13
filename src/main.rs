@@ -1,7 +1,6 @@
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::{Path, PathBuf};
-use std::process;
-use std::{fs, path};
+use std::{fmt, fs, path, process};
 
 use base64;
 use chrono::Local;
@@ -11,13 +10,52 @@ use ipnet::Ipv4Net;
 use itertools::Itertools;
 use rand_core::{OsRng, RngCore};
 use rpassword::prompt_password_stdout;
+use secrecy::{ExposeSecret, Secret};
 use x25519_dalek::{PublicKey, StaticSecret};
+
+enum HzErr {
+    CalcComb,
+    DirErr,
+    FileErr,
+    FileExists,
+    GenKeyPair,
+    GenPSK,
+    ParseIP,
+    ParsePort,
+    ParseSubnet,
+    PortRange,
+    TooFewIPs,
+    UserCancel,
+    UserInput,
+    UserPrompt,
+}
+
+impl fmt::Display for HzErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            HzErr::CalcComb => write!(f, "Error host calculating pair combinations."),
+            HzErr::DirErr => write!(f, "Error creating directory for configuration files."),
+            HzErr::FileErr => write!(f, "Error creating file."),
+            HzErr::FileExists => write!(f, "Error: file already exists."),
+            HzErr::GenKeyPair => write!(f, "Error generating keypair."),
+            HzErr::GenPSK => write!(f, "Error generating preshared key."),
+            HzErr::ParseIP => write!(f, "Error parsing IP address."),
+            HzErr::ParsePort => write!(f, "Error parsing port."),
+            HzErr::ParseSubnet => write!(f, "Error parsing subnet."),
+            HzErr::PortRange => write!(f, "Valid port range: 1 - 65535."),
+            HzErr::TooFewIPs => write!(f, "Too few IPs in specified subnet."),
+            HzErr::UserCancel => write!(f, "User cancelled."),
+            HzErr::UserInput => write!(f, "Unable to interpret input."),
+            HzErr::UserPrompt => write!(f, "Encountered error at user prompt."),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 struct HostConfig {
     endpoint_addr: SocketAddrV4,
     priv_addr: Ipv4Addr,
-    priv_key: String,
+    priv_key: Secret<String>,
     pub_key: String,
     peers: Vec<HostPeer>,
 }
@@ -33,7 +71,7 @@ struct HostPeer {
     endpoint_addr: SocketAddrV4,
     priv_addr: Ipv4Addr,
     pub_key: String,
-    preshared_key: String,
+    preshared_key: Secret<String>,
 }
 
 impl PartialEq for HostPeer {
@@ -48,7 +86,7 @@ impl PartialEq for HostPeer {
 // https://stackoverflow.com/a/12130280
 fn calc_combinations(mut n: usize, r: usize) -> Result<usize, String> {
     if r > n {
-        return Err(String::from("Error calculating host combinations."));
+        return Err(HzErr::CalcComb.to_string());
     }
 
     let mut combos = 1;
@@ -66,9 +104,7 @@ fn check_and_create_conf_dir(dir_name: &str) -> Result<PathBuf, String> {
 
     if let Err(e) = fs::DirBuilder::new().recursive(true).create(&path) {
         println!("{}", e);
-        return Err(String::from(
-            "Error creating directory configuration directory",
-        ));
+        return Err(HzErr::DirErr.to_string());
     }
 
     Ok(path)
@@ -78,9 +114,9 @@ fn check_and_create_conf_file(dir: &PathBuf, file: &str, text: &str) -> Result<S
     let path = Path::new(dir).join(file);
 
     if path.exists() {
-        return Err(String::from("Configuration file already exists"));
+        return Err(HzErr::FileExists.to_string());
     } else if fs::write(path, text).is_err() {
-        return Err(String::from("Error creating configuration file"));
+        return Err(HzErr::FileErr.to_string());
     }
 
     Ok(file.to_string())
@@ -133,13 +169,11 @@ fn confirmation_display(host_configs: &[HostConfig]) -> Result<(), String> {
     if let Ok(response) = prompt_password_stdout("\nDoes everything look OK? (y/n) ") {
         match &response.to_ascii_lowercase()[..1] {
             "y" => Ok(()),
-            "n" => Err(String::from("Cancelling...")),
-            _ => Err(String::from("Unable to interpret input")),
+            "n" => Err(HzErr::UserCancel.to_string()),
+            _ => Err(HzErr::UserInput.to_string()),
         }
     } else {
-        Err(String::from(
-            "Error encountered while requesting user confirmation.",
-        ))
+        Err(HzErr::UserPrompt.to_string())
     }
 }
 
@@ -150,7 +184,7 @@ fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, Stri
     }
 
     if ip_addresses.len() < host_count {
-        return Err(String::from("Subnet too small for hosts specified."));
+        return Err(HzErr::TooFewIPs.to_string());
     }
 
     Ok(ip_addresses)
@@ -158,13 +192,13 @@ fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, Stri
 
 fn gen_config_text(host_conf: &HostConfig) -> String {
     let addr_line = format!("Address = {}", host_conf.priv_addr);
-    let key_line = format!("PrivateKey = {}", host_conf.priv_key);
+    let key_line = format!("PrivateKey = {}", host_conf.priv_key.expose_secret());
     let port_line = format!("ListenPort = {}", host_conf.endpoint_addr.port());
     let mut text = format!("[Interface]\n{}\n{}\n{}\n", addr_line, key_line, port_line);
 
     for peer in &host_conf.peers {
         let key_line = format!("PublicKey = {}", peer.pub_key);
-        let psk_line = format!("PreSharedKey = {}", peer.preshared_key);
+        let psk_line = format!("PreSharedKey = {}", peer.preshared_key.expose_secret());
         let endpnt_line = format!("Endpoint = {}", peer.endpoint_addr);
         let addr_line = format!("AllowedIPs = {}/32", peer.priv_addr);
         text = format!(
@@ -228,34 +262,34 @@ fn gen_host_configs(pub_ips: &[Ipv4Addr], priv_subnet: Ipv4Net, port: u16) -> Ve
     hosts
 }
 
-fn gen_preshared_keys(host_pair_count: usize) -> Result<Vec<String>, String> {
-    let mut keys: Vec<String> = Vec::with_capacity(host_pair_count);
+fn gen_preshared_keys(host_pair_count: usize) -> Result<Vec<Secret<String>>, String> {
+    let mut keys = Vec::with_capacity(host_pair_count);
     for _ in 0..host_pair_count {
         let mut key: [u8; 32] = [0_u8; 32];
         OsRng.fill_bytes(&mut key);
-        keys.push(base64::encode(&key));
+        keys.push(Secret::new(base64::encode(&key)));
     }
 
     if keys.is_empty() {
-        return Err(String::from("Error generating preshared keys."));
+        return Err(HzErr::GenPSK.to_string());
     }
     Ok(keys)
 }
 
-fn gen_x25519_keypairs(host_count: usize) -> Result<Vec<(String, String)>, String> {
-    let mut keypairs: Vec<(String, String)> = Vec::with_capacity(host_count);
+fn gen_x25519_keypairs(host_count: usize) -> Result<Vec<(Secret<String>, String)>, String> {
+    let mut keypairs: Vec<(Secret<String>, String)> = Vec::with_capacity(host_count);
     for _ in 0..host_count {
         let secret_key = StaticSecret::new(&mut OsRng);
         let pub_key = PublicKey::from(&secret_key);
         let keypair = (
-            base64::encode(&secret_key.to_bytes()),
+            Secret::new(base64::encode(&secret_key.to_bytes())),
             base64::encode(&pub_key.as_bytes()),
         );
         keypairs.push(keypair);
     }
 
     if keypairs.is_empty() {
-        return Err(String::from("Error generating keypairs."));
+        return Err(HzErr::GenKeyPair.to_string());
     }
     Ok(keypairs)
 }
@@ -275,7 +309,7 @@ fn is_ip(val: String) -> Result<(), String> {
     if val.parse::<Ipv4Addr>().is_ok() {
         Ok(())
     } else {
-        Err(String::from("Error parsing IP address"))
+        Err(HzErr::ParseIP.to_string())
     }
 }
 
@@ -285,10 +319,10 @@ fn is_port(val: String) -> Result<(), String> {
         if (integer > 0) && (integer < 65536) {
             Ok(())
         } else {
-            Err(String::from("The value must be between 1 and 65535"))
+            Err(HzErr::PortRange.to_string())
         }
     } else {
-        Err(String::from("Unable to parse port"))
+        Err(HzErr::ParsePort.to_string())
     }
 }
 
@@ -297,7 +331,7 @@ fn is_subnet(val: String) -> Result<(), String> {
     if val.parse::<Ipv4Net>().is_ok() {
         Ok(())
     } else {
-        Err(String::from("Error parsing subnet"))
+        Err(HzErr::ParseSubnet.to_string())
     }
 }
 fn time_now() -> String {
@@ -524,13 +558,16 @@ mod tests {
             fn $name() {
                 let q = $value;
 
-                let mut preshared_keys: Vec<String> = gen_preshared_keys(q).unwrap();
-                preshared_keys.sort();
+                let preshared_keys: Vec<Secret<String>> = gen_preshared_keys(q).unwrap();
+                let mut unmasked_keys: Vec<String> = Vec::new();
+                for i in 0..preshared_keys.len() {
+                    unmasked_keys.push(preshared_keys[i].expose_secret().clone());
+                }
 
-                let mut preshared_keys_ded = preshared_keys.clone();
-                preshared_keys_ded.dedup();
+                unmasked_keys.sort();
+                unmasked_keys.dedup();
 
-                assert_eq!(preshared_keys_ded.len(), preshared_keys.len());
+                assert_eq!(unmasked_keys.len(), preshared_keys.len());
             }
         )*
         }
@@ -582,8 +619,8 @@ mod tests {
         fn_is_ip_rfc_1918a: ("10.0.0.0", Ok(()) ),
         fn_is_ip_rfc_1918b: ("172.16.0.0", Ok(()) ),
         fn_is_ip_rfc_1918c: ("192.168.0.0", Ok(()) ),
-        fn_is_ip_invalid_octet: ("192.168.256.0", Err(String::from("Error parsing IP address"))),
-        fn_is_ip_extra_octet: ("192.168.256.0.0", Err(String::from("Error parsing IP address"))),
+        fn_is_ip_invalid_octet: ("192.168.256.0", Err(String::from("Error parsing IP address."))),
+        fn_is_ip_extra_octet: ("192.168.256.0.0", Err(String::from("Error parsing IP address."))),
     }
 
     // Verifies is_port() properly identifies input as correct
@@ -592,8 +629,8 @@ mod tests {
         fn_is_port_256: ("256", Ok(()) ),
         fn_is_port_2048: ("2048", Ok(()) ),
         fn_is_port_65535: ("65535", Ok(()) ),
-        fn_is_port_65536: ("65536", Err(String::from("The value must be between 1 and 65535"))),
-        fn_is_port_0: ("0", Err(String::from("The value must be between 1 and 65535"))),
+        fn_is_port_65536: ("65536", Err(String::from("Valid port range: 1 - 65535."))),
+        fn_is_port_0: ("0", Err(String::from("Valid port range: 1 - 65535."))),
     }
 
     // Verifies is_subnet() properly identifies input as correct
@@ -602,8 +639,8 @@ mod tests {
         fn_is_subnet_rfc1918a: ("10.0.0.0/8", Ok(()) ),
         fn_is_subnet_rfc1918b: ("172.16.0.0/12", Ok(()) ),
         fn_is_subnet_rfc1918c: ("192.168.0.0/16", Ok(()) ),
-        fn_is_subnet_invalid_octet: ("11.11.256.0/8", Err(String::from("Error parsing subnet"))),
-        fn_is_subnet_invalid_prefix: ("11.11.11.0/33", Err(String::from("Error parsing subnet"))),
+        fn_is_subnet_invalid_octet: ("11.11.256.0/8", Err(String::from("Error parsing subnet."))),
+        fn_is_subnet_invalid_prefix: ("11.11.11.0/33", Err(String::from("Error parsing subnet."))),
     }
 
     // Make sure gen_preshared_keys() generates

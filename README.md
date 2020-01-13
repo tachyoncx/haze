@@ -2,6 +2,12 @@
 ### About
 Given an arbitrary number of WireGuard hosts, Haze generates (rather, *will* generate) the wg0.conf files needed for a full mesh topology. Each host is assigned a private address from the desired subnet, a keypair, and is made aware of peers' addresses and public keys. Additionally, for each pair of peers, Haze generates and assigns a unique preshared key.
 
+#### Uses:
+- [x25519_dalek](https://docs.rs/x25519-dalek/0.6.0/x25519_dalek/) to generate keypairs
+- [OsRng](https://docs.rs/rand/0.7.3/rand/rngs/struct.OsRng.html) to generate preshared keys
+- The [secrecy](https://docs.rs/secrecy/0.6.0/secrecy/index.html) crate to handle secrets
+- [Clap](https://docs.rs/clap/2.33.0/clap/) to parse command line arguments
+
 ### Example Four-Node Topology
 ![Four-node topology](/resources/haze_1.png)
 
@@ -14,11 +20,6 @@ Given an arbitrary number of WireGuard hosts, Haze generates (rather, *will* gen
 - Add option to encrypt the config files with a password
     - I'm thinking AES-256/PBKDF2-SHA3-512 (500K iterations)
     - Instead of encrypted_blob.txt, output a Python script with the ciphertext inline as a variable. Use python/cryptography to read in the ciphertext, salt, and encryption parameters. Then request a user password, derive the key, and decrypt directly to /etc/wg0.conf.
-- Look at zeroize for clearing the following on exit:
-    - Preshared keys
-    - Public and private keys
-    - Symmetric encryption keys (for AES-256) and salt
-    - User password input
 - Add option to generate all the scp commands needed to transport configs to each server
 
 ### Expected functionality
