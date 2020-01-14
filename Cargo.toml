@@ -16,6 +16,7 @@ itertools = "0.8.2"
 rpassword = "4.0.3"
 secrecy = "0.6.0"
 x25519-dalek = "0.6.0"
+zeroize = "1.1.0"
 
 [dependencies.rand_core]
 version = "0.5.1"

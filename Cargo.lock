@@ -134,6 +134,7 @@ dependencies = [
  "rpassword 4.0.3 (registry+https://github.com/rust-lang/crates.io-index)",
  "secrecy 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "x25519-dalek 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
+ "zeroize 1.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

@@ -12,6 +12,7 @@ use rand_core::{OsRng, RngCore};
 use rpassword::prompt_password_stdout;
 use secrecy::{ExposeSecret, Secret};
 use x25519_dalek::{PublicKey, StaticSecret};
+use zeroize::Zeroize;
 
 enum HzErr {
     CalcComb,
@@ -271,6 +272,7 @@ fn gen_preshared_keys(host_pair_count: usize) -> Result<Vec<Secret<String>>, Str
         let mut key: [u8; 32] = [0_u8; 32];
         OsRng.fill_bytes(&mut key);
         keys.push(Secret::new(base64::encode(&key)));
+        key.zeroize();
     }
 
     if keys.is_empty() {
@@ -282,13 +284,14 @@ fn gen_preshared_keys(host_pair_count: usize) -> Result<Vec<Secret<String>>, Str
 fn gen_x25519_keypairs(host_count: usize) -> Result<Vec<(Secret<String>, String)>, String> {
     let mut keypairs: Vec<(Secret<String>, String)> = Vec::with_capacity(host_count);
     for _ in 0..host_count {
-        let secret_key = StaticSecret::new(&mut OsRng);
+        let mut secret_key = StaticSecret::new(&mut OsRng);
         let pub_key = PublicKey::from(&secret_key);
         let keypair = (
             Secret::new(base64::encode(&secret_key.to_bytes())),
             base64::encode(&pub_key.as_bytes()),
         );
         keypairs.push(keypair);
+        secret_key.zeroize();
     }
 
     if keypairs.is_empty() {
