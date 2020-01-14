@@ -73,6 +73,7 @@ struct HostPeer {
     priv_addr: Ipv4Addr,
     pub_key: String,
     preshared_key: Secret<String>,
+    keepalive: u16,
 }
 
 impl PartialEq for HostPeer {
@@ -171,7 +172,11 @@ fn confirmation_display(host_configs: &[HostConfig]) -> Result<(), String> {
                 hl_two(&"** Hidden **"));
         }
     }
-    if let Ok(response) = prompt_password_stdout("\nDoes everything look OK? (y/n) ") {
+    continue_prompt()
+}
+
+fn continue_prompt() -> Result<(), String> {
+    if let Ok(response) = prompt_password_stdout("\nContinue? (y/n) ") {
         match &response.to_ascii_lowercase()[..1] {
             "y" => Ok(()),
             "n" => Err(HzErr::UserCancel.to_string()),
@@ -211,9 +216,10 @@ fn gen_config_text(host_conf: &HostConfig) -> Secret<String> {
         let psk_line = format!("PreSharedKey = {}", peer.preshared_key.expose_secret());
         let endpnt_line = format!("Endpoint = {}", peer.endpoint_addr);
         let addr_line = format!("AllowedIPs = {}/32", peer.priv_addr);
+        let keepalive_line = format!("PersistentKeepAlive = {}", peer.keepalive);
         text = format!(
-            "{}\n[Peer]\n{}\n{}\n{}\n{}\n",
-            text, key_line, psk_line, endpnt_line, addr_line
+            "{}\n[Peer]\n{}\n{}\n{}\n{}\n{}\n",
+            text, key_line, psk_line, endpnt_line, addr_line, keepalive_line
         );
     }
     Secret::new(text)
@@ -224,6 +230,7 @@ fn gen_host_configs(
     priv_subnet: Ipv4Net,
     ports: String,
     rand_ports: bool,
+    keepalive: u16,
 ) -> Vec<HostConfig> {
     let host_count = pub_ips.len();
     let priv_addresses = enum_subnet(host_count, priv_subnet).unwrap();
@@ -255,12 +262,14 @@ fn gen_host_configs(
             priv_addr: j[0].priv_addr,
             pub_key: j[0].pub_key.clone(),
             preshared_key: host_pair_psks[i].clone(),
+            keepalive,
         };
         let peer_1 = HostPeer {
             endpoint_addr: j[1].endpoint_addr,
             priv_addr: j[1].priv_addr,
             pub_key: j[1].pub_key.clone(),
             preshared_key: host_pair_psks[i].clone(),
+            keepalive,
         };
         paired_configs.push((peer_0, peer_1));
     }
@@ -332,10 +341,10 @@ fn is_ip(val: String) -> Result<(), String> {
     }
 }
 
-// Is this input string a port?
-fn is_port(val: String) -> Result<(), String> {
+// Is this input string a valid port or keepalive?
+fn is_u16(val: String) -> Result<(), String> {
     if let Ok(integer) = val.parse::<u32>() {
-        if (integer > 0) && (integer < 65536) {
+        if integer < 65536 {
             Ok(())
         } else {
             Err(HzErr::PortRange.to_string())
@@ -414,6 +423,7 @@ fn main() {
         .arg(
             Arg::with_name("ip_addr")
                 .help("Specify external addresses of WireGuard hosts")
+                .display_order(500)
                 .short("e")
                 .long("endpoints")
                 .value_name("IP")
@@ -425,17 +435,19 @@ fn main() {
         )
         .arg(
             Arg::with_name("wg_port")
-                .help("Specify external port of WireGuard hosts")
+                .help("Specify external port of WireGuard hosts [default: 51820]")
+                .display_order(505)
                 .short("p")
                 .long("port")
                 .value_name("PORT")
                 .multiple(false)
                 .require_equals(true)
-                .validator(is_port),
+                .validator(is_u16),
         )
         .arg(
             Arg::with_name("seq_port_range")
-                .help("Specify sequential external port range for WireGuard hosts. Wraps if range is less than available hosts.")
+                .help("Specify external port range for WireGuard hosts. Wraps if range is less than available hosts.")
+                .display_order(510)
                 .short("r")
                 .long("port-range")
                 .value_name("LPORT-HPORT")
@@ -446,6 +458,7 @@ fn main() {
         .arg(
             Arg::with_name("rand_port_range")
                 .help("Specify random external port range for WireGuard hosts.")
+                .display_order(515)
                 .short("R")
                 .long("random-port-range")
                 .value_name("LPORT-HPORT")
@@ -455,10 +468,11 @@ fn main() {
         )
         .group(ArgGroup::with_name("ports_group")
             .args(&["wg_port", "seq_port_range", "rand_port_range"])
-            .required(true))
+            .required(false))
         .arg(
             Arg::with_name("private_subnet")
                 .help("Internal subnet of WireGuard hosts")
+                .display_order(600)
                 .short("s")
                 .long("subnet")
                 .value_name("ADDRESS/CIDR")
@@ -475,6 +489,18 @@ fn main() {
                 .long("quiet")
                 .multiple(false)
                 .required(false),
+        )
+        .arg(
+            Arg::with_name("keepalive")
+                .help("Set a keepalive time (useful if behind NAT)")
+                .display_order(605)
+                .short("k")
+                .long("keepalive")
+                .require_equals(true)
+                .default_value("0")
+                .multiple(false)
+                .required(false)
+                .validator(is_u16),
         )
         .get_matches();
 
@@ -516,8 +542,7 @@ fn main() {
                 process::exit(1);
             }
         } else {
-            println!("Error encountered reading port range.");
-            process::exit(1);
+            ("51820".to_string(), false)
         }
     };
 
@@ -535,21 +560,50 @@ fn main() {
         }
     };
 
-    if !matches.is_present("wg_ports") {
-        println!(
-            "No public port specified. Using default: {}",
-            "51820".green()
-        );
-    }
+    let keepalive: u16 = {
+        if let Some(raw_keepalive) = matches.value_of("keepalive") {
+            if let Ok(keepalive) = raw_keepalive.parse() {
+                keepalive
+            } else {
+                println!("Error parsing private keepalive: {}", raw_keepalive);
+                process::exit(1);
+            }
+        } else {
+            println!("Error encountered reading keepalive.");
+            process::exit(1);
+        }
+    };
 
-    if !matches.is_present("private_addresses") {
+
+    if matches.occurrences_of("private_subnet") == 0 {
         println!(
             "No private subnet specified. Using default: {}",
             "172.16.128.0/24".green()
         );
     }
 
-    let configs = gen_host_configs(&pub_ips, priv_subnet, pub_port, rand_port);
+    if matches.occurrences_of("keepalive") == 0 {
+        println!(
+            "No keepalive specified. Using default: {}",
+            "0".green()
+        );
+    }
+
+    if !(matches.is_present("wg_port") | 
+        matches.is_present("sq_port_range") | 
+        matches.is_present("rand_port_range"))  {
+        println!(
+            "No port or port range specified. Using default: {}",
+            "51820".green()
+        );
+    }
+
+    if let Err(e) = continue_prompt() {
+        println!("{}", e);
+        process::exit(1);
+    }
+    
+    let configs = gen_host_configs(&pub_ips, priv_subnet, pub_port, rand_port, keepalive);
 
     if !matches.is_present("no_confirm") {
         if let Err(e) = confirmation_display(&configs) {
@@ -651,7 +705,7 @@ mod tests {
                 #[test]
                 fn $name() {
                     let (q, r) = $value;
-                    assert_eq!(r, is_port(String::from(q)));
+                    assert_eq!(r, is_u16(String::from(q)));
                 }
             )*
             }
@@ -761,7 +815,7 @@ mod tests {
         fn_is_port_range_invalid_port: ("65536-65538", Err(String::from("Error parsing port range (low)."))),
     }
 
-    // Verifies is_port() properly identifies input as correct
+    // Verifies is_u16() properly identifies input as correct
     // or incorrect
     is_port_works_correctly! {
         fn_is_port_256: ("256", Ok(()) ),
