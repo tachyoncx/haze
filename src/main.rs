@@ -5,7 +5,7 @@ use std::{fmt, fs, path, process};
 use base64;
 use chrono::Local;
 use clap::{App, Arg};
-use colored::*;
+use colored::Colorize;
 use ipnet::Ipv4Net;
 use itertools::Itertools;
 use rand_core::{OsRng, RngCore};
@@ -51,7 +51,7 @@ impl fmt::Display for HzErr {
     }
 }
 
-#[derive(Debug, Clone)]
+
 struct HostConfig {
     endpoint_addr: SocketAddrV4,
     priv_addr: Ipv4Addr,
@@ -66,7 +66,7 @@ impl HostConfig {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 struct HostPeer {
     endpoint_addr: SocketAddrV4,
     priv_addr: Ipv4Addr,
@@ -182,6 +182,7 @@ fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, Stri
     for ip_address in subnet.hosts() {
         ip_addresses.push(ip_address);
     }
+    ip_addresses.truncate(host_count);
 
     if ip_addresses.len() < host_count {
         return Err(HzErr::TooFewIPs.to_string());
@@ -209,17 +210,20 @@ fn gen_config_text(host_conf: &HostConfig) -> String {
     text
 }
 
-fn gen_host_configs(pub_ips: &[Ipv4Addr], priv_subnet: Ipv4Net, port: u16) -> Vec<HostConfig> {
+fn gen_host_configs(pub_ips: &[Ipv4Addr], priv_subnet: Ipv4Net, ports: String) -> Vec<HostConfig> {
     let host_count = pub_ips.len();
-    let mut priv_addresses = enum_subnet(host_count, priv_subnet).unwrap();
-    priv_addresses.truncate(host_count);
+    let priv_addresses = enum_subnet(host_count, priv_subnet).unwrap();
     let host_keypairs = gen_x25519_keypairs(host_count).unwrap();
 
     let host_pair_count = calc_combinations(host_count, 2).unwrap();
     let host_pair_psks = gen_preshared_keys(host_pair_count).unwrap();
 
+    let port_vec = parse_port_range(ports, true).unwrap().unwrap();
+    let mut port_iter = port_vec.into_iter().cycle();
+
     let mut hosts: Vec<HostConfig> = Vec::with_capacity(host_count);
     for (i, j) in priv_addresses.iter().enumerate() {
+        let port = port_iter.next().unwrap();
         hosts.push(HostConfig {
             endpoint_addr: SocketAddrV4::new(pub_ips[i], port),
             priv_addr: *j,
@@ -258,7 +262,6 @@ fn gen_host_configs(pub_ips: &[Ipv4Addr], priv_subnet: Ipv4Net, port: u16) -> Ve
             }
         }
     }
-
     hosts
 }
 
@@ -334,6 +337,44 @@ fn is_subnet(val: String) -> Result<(), String> {
         Err(HzErr::ParseSubnet.to_string())
     }
 }
+
+// Wrapper function for parse_port_range that only returns Ok()/Err()
+fn is_port_range(val: String) -> Result<(), String> {
+    match parse_port_range(val, false) {
+        Ok(_) => Ok(()),
+        Err(e) => Err(e),
+    }
+}
+
+fn parse_port_range(val: String, full_parse: bool) -> Result<Option<Vec<u16>>, String> {
+    let ports: Vec<&str> = val.split('-').collect();
+
+    if ports.len() > 1 {
+        let low_port: u16 = match ports[0].parse() {
+            Ok(p) => p,
+            Err(_) => return Err("Error parsing port range (low).".to_string()),
+        };
+        let high_port: u16 = match ports[1].parse() {
+            Ok(p) => p,
+            Err(_) => return Err("Error parsing port range (high).".to_string()),
+        };
+
+        if low_port > high_port {
+            return Err("Error: low port is higher than upper port.".to_string());
+        }
+
+        if !full_parse {
+            return Ok(None);
+        } else {
+            return Ok(Some((low_port..=high_port).collect()));
+        }
+    }
+    match ports[0].parse::<u16>() {
+        Ok(p) => Ok(Some(vec![p])),
+        Err(_) => Err("Error parsing port range (low).".to_string()),
+    }
+}
+
 fn time_now() -> String {
     Local::now().format("%a-%H-%M").to_string()
 }
@@ -362,8 +403,17 @@ fn main() {
                 .takes_value(true)
                 .multiple(false)
                 .required(false)
-                .default_value("51820")
                 .validator(is_port),
+        )
+        .arg(
+            Arg::with_name("port_range")
+                .help("Specify external port range for WireGuard hosts")
+                .short("r")
+                .long("port-range")
+                .takes_value(true)
+                .multiple(false)
+                .required(false)
+                .validator(is_port_range),
         )
         .arg(
             Arg::with_name("private_subnet")
@@ -401,16 +451,23 @@ fn main() {
         process::exit(1);
     }
 
-    let pub_port: u16 = {
+    let pub_port: String = {
         if let Some(raw_port) = matches.value_of("public_port") {
-            if let Ok(port) = raw_port.parse() {
-                port
+            if raw_port.parse::<u16>().is_ok() {
+                raw_port.to_string()
             } else {
                 println!("Error parsing port: {}", raw_port);
                 process::exit(1);
             }
+        } else if let Some(raw_port_range) = matches.value_of("port_range") {
+            if parse_port_range(raw_port_range.to_string(), false).is_ok() {
+                raw_port_range.to_string()
+            } else {
+                println!("Error parsing port range: {}", raw_port_range);
+                process::exit(1);
+            }
         } else {
-            println!("Error encountered reading port.");
+            println!("Error encountered reading port range.");
             process::exit(1);
         }
     };
@@ -485,7 +542,7 @@ mod tests {
             #[test]
             fn $name() {
                 let (q, r) = $value;
-                assert_eq!(q, enum_subnet(0, r.parse::<Ipv4Net>().unwrap()).unwrap().len());
+                assert_eq!(q, enum_subnet(q, r.parse::<Ipv4Net>().unwrap()).unwrap().len());
             }
         )*
         }
@@ -527,6 +584,18 @@ mod tests {
             }
     }
 
+    macro_rules! is_port_range_works_correctly {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (q, r) = $value;
+                    assert_eq!(r, is_port_range(String::from(q)));
+                }
+            )*
+            }
+    }
+
     macro_rules! is_port_works_correctly {
         ($($name:ident: $value:expr,)*) => {
             $(
@@ -546,6 +615,18 @@ mod tests {
                 fn $name() {
                     let (q, r) = $value;
                     assert_eq!(r, is_subnet(String::from(q)));
+                }
+            )*
+            }
+    }
+
+    macro_rules! parse_port_range_correctly {
+        ($($name:ident: $value:expr,)*) => {
+            $(
+                #[test]
+                fn $name() {
+                    let (q, r) = $value;
+                    assert_eq!(r, parse_port_range(String::from(q), true));
                 }
             )*
             }
@@ -623,6 +704,14 @@ mod tests {
         fn_is_ip_extra_octet: ("192.168.256.0.0", Err(String::from("Error parsing IP address."))),
     }
 
+    is_port_range_works_correctly! {
+        fn_is_port_range_50_to_75: ("50-75", Ok(())),
+        fn_is_port_range_32k_plus_100: ("32000-32100", Ok(())),
+        fn_is_port_range_50k_plus_25: ("50000-50025", Ok(())),
+        fn_is_port_range_reversed_range: ("50025-50000", Err(String::from("Error: low port is higher than upper port."))),
+        fn_is_port_range_invalid_port: ("65536-65538", Err(String::from("Error parsing port range (low)."))),
+    }
+
     // Verifies is_port() properly identifies input as correct
     // or incorrect
     is_port_works_correctly! {
@@ -641,6 +730,14 @@ mod tests {
         fn_is_subnet_rfc1918c: ("192.168.0.0/16", Ok(()) ),
         fn_is_subnet_invalid_octet: ("11.11.256.0/8", Err(String::from("Error parsing subnet."))),
         fn_is_subnet_invalid_prefix: ("11.11.11.0/33", Err(String::from("Error parsing subnet."))),
+    }
+
+    parse_port_range_correctly! {
+        fn_parse_port_range_5_to_10: (("5-7"), Ok(Some(vec![5,6,7])) ),
+        fn_parse_port_range_500_to_600: (("500-502"), Ok(Some(vec![500,501,502])) ),
+        fn_parse_port_range_50k_to_51k: (("50000-50002"), Ok(Some(vec![50000,50001,50002])) ),
+        fn_parse_port_range_backwards: (("51002-50000"), Err(String::from("Error: low port is higher than upper port.")) ),
+        fn_parse_port_range_invalid: (("80002-80000"), Err(String::from("Error parsing port range (low).")) ),
     }
 
     // Make sure gen_preshared_keys() generates
