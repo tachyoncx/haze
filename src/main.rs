@@ -23,9 +23,9 @@ enum HzErr {
     GenKeyPair,
     GenPSK,
     ParseIP,
-    ParsePort,
+    ParseU16,
     ParseSubnet,
-    PortRange,
+    U16Range,
     TooFewIPs,
     UserCancel,
     UserInput,
@@ -42,9 +42,9 @@ impl fmt::Display for HzErr {
             Self::GenKeyPair => write!(f, "Error generating keypair."),
             Self::GenPSK => write!(f, "Error generating preshared key."),
             Self::ParseIP => write!(f, "Error parsing IP address."),
-            Self::ParsePort => write!(f, "Error parsing port."),
+            Self::ParseU16 => write!(f, "Error parsing integer."),
             Self::ParseSubnet => write!(f, "Error parsing subnet."),
-            Self::PortRange => write!(f, "Valid port range: 1 - 65535."),
+            Self::U16Range => write!(f, "Error parsing integer."),
             Self::TooFewIPs => write!(f, "Too few IPs in specified subnet."),
             Self::UserCancel => write!(f, "User cancelled."),
             Self::UserInput => write!(f, "Unable to interpret input."),
@@ -347,10 +347,10 @@ fn is_u16(val: String) -> Result<(), String> {
         if integer < 65536 {
             Ok(())
         } else {
-            Err(HzErr::PortRange.to_string())
+            Err(HzErr::U16Range.to_string())
         }
     } else {
-        Err(HzErr::ParsePort.to_string())
+        Err(HzErr::ParseU16.to_string())
     }
 }
 
@@ -574,7 +574,6 @@ fn main() {
         }
     };
 
-
     if matches.occurrences_of("private_subnet") == 0 {
         println!(
             "No private subnet specified. Using default: {}",
@@ -583,15 +582,13 @@ fn main() {
     }
 
     if matches.occurrences_of("keepalive") == 0 {
-        println!(
-            "No keepalive specified. Using default: {}",
-            "0".green()
-        );
+        println!("No keepalive specified. Using default: {}", "0".green());
     }
 
-    if !(matches.is_present("wg_port") | 
-        matches.is_present("sq_port_range") | 
-        matches.is_present("rand_port_range"))  {
+    if !(matches.is_present("wg_port")
+        | matches.is_present("sq_port_range")
+        | matches.is_present("rand_port_range"))
+    {
         println!(
             "No port or port range specified. Using default: {}",
             "51820".green()
@@ -602,7 +599,7 @@ fn main() {
         println!("{}", e);
         process::exit(1);
     }
-    
+
     let configs = gen_host_configs(&pub_ips, priv_subnet, pub_port, rand_port, keepalive);
 
     if !matches.is_present("no_confirm") {
@@ -821,8 +818,8 @@ mod tests {
         fn_is_port_256: ("256", Ok(()) ),
         fn_is_port_2048: ("2048", Ok(()) ),
         fn_is_port_65535: ("65535", Ok(()) ),
-        fn_is_port_65536: ("65536", Err(String::from("Valid port range: 1 - 65535."))),
-        fn_is_port_0: ("0", Err(String::from("Valid port range: 1 - 65535."))),
+        fn_is_port_65536: ("65536", Err(String::from("Error parsing integer."))),
+        fn_is_port_neg_1: ("-1", Err(String::from("Error parsing integer."))),
     }
 
     // Verifies is_subnet() properly identifies input as correct
