@@ -1,6 +1,5 @@
 use super::{Ipv4Addr, Ipv4Net};
 
-
 // Is this input string an IP?
 pub fn is_ip(ip: String) -> Result<(), String> {
     if ip.parse::<Ipv4Addr>().is_ok() {
@@ -54,7 +53,7 @@ pub fn is_port_range(val: String) -> Result<(), String> {
             return Err("Error: first port in range is higher than second.".to_string());
         }
 
-        return Ok(())
+        return Ok(());
     }
     Err("Error parsing range (verify format matches 'LPORT-HPORT'".to_string())
 }
@@ -67,7 +66,6 @@ pub fn is_subnet(val: String) -> Result<(), String> {
         Err("Error parsing subnet.".to_string())
     }
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -173,9 +171,4 @@ mod tests {
         fn_is_subnet_invalid_octet: ("11.11.256.0/8", Err(String::from("Error parsing subnet."))),
         fn_is_subnet_invalid_prefix: ("11.11.11.0/33", Err(String::from("Error parsing subnet."))),
     }
-
-
-
-
 }
-

@@ -1,10 +1,7 @@
-use super::{Ipv4Addr,Ipv4Net,OsRng};
+use super::{Ipv4Addr, Ipv4Net, OsRng};
 use rand::seq::SliceRandom;
 
-pub fn enum_port_range(
-    val: String,
-    randomize: bool,
-) -> Result<Vec<u16>, String> {
+pub fn enum_port_range(val: &str, randomize: bool) -> Result<Vec<u16>, String> {
     let ports: Vec<&str> = val.split('-').collect();
 
     if ports.len() == 2 {
@@ -22,13 +19,19 @@ pub fn enum_port_range(
         }
 
         let mut port_vec: Vec<u16> = (low_port..=high_port).collect();
-            if randomize {
-                port_vec.shuffle(&mut OsRng);
-            }
-            return Ok(port_vec);
-        } else {
-            return Err("Error parsing range (verify format matches 'LPORT-HPORT'".to_string());
+        if randomize {
+            port_vec.shuffle(&mut OsRng);
         }
+        Ok(port_vec)
+    } else if ports.len() == 1 {
+        if let Ok(port) = ports[0].parse() {
+            Ok(vec![port])
+        } else {
+            Err("Error parsing port.".to_string())
+        }
+    } else {
+        Err("Error parsing range (verify format matches 'LPORT-HPORT'".to_string())
+    }
 }
 
 pub fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, String> {
@@ -85,7 +88,7 @@ mod tests {
                 #[test]
                 fn $name() {
                     let (q, r) = $value;
-                    assert_eq!(r, enum_port_range(String::from(q), false));
+                    assert_eq!(r, enum_port_range(&String::from(q), false));
                 }
             )*
             }
@@ -122,7 +125,7 @@ mod tests {
         fn_enum_port_range_second_invalid: (("800-80b"), Err(String::from("Error parsing second port in the range.")) ),
     }
 
-        // Ensure that enumerating a subnet returns the expected
+    // Ensure that enumerating a subnet returns the expected
     // number of hosts
     expected_return_amounts_enum_subnet! {
         fn_enum_subnet_slash24_is_254: (254, "10.0.0.0/24"),

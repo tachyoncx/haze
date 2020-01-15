@@ -1,6 +1,7 @@
+use std::fs::{self, DirBuilder};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::{Path, PathBuf};
-use std::{fmt, fs, path, process};
+use std::process;
 
 use base64;
 use chrono::Local;
@@ -14,45 +15,12 @@ use secrecy::{ExposeSecret, Secret};
 use x25519_dalek::{PublicKey, StaticSecret};
 use zeroize::Zeroize;
 
-mod validate;
 mod ranges;
+mod validate;
 
-enum HzErr {
-    CalcComb,
-    DirErr,
-    FileErr,
-    FileExists,
-    GenKeyPair,
-    GenPSK,
-    ParseIP,
-    ParseU16,
-    ParseSubnet,
-    U16Range,
-    TooFewIPs,
-    UserCancel,
-    UserInput,
-    UserPrompt,
-}
-
-impl fmt::Display for HzErr {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::CalcComb => write!(f, "Error host calculating pair combinations."),
-            Self::DirErr => write!(f, "Error creating directory for configuration files."),
-            Self::FileErr => write!(f, "Error creating file."),
-            Self::FileExists => write!(f, "Error: file already exists."),
-            Self::GenKeyPair => write!(f, "Error generating keypair."),
-            Self::GenPSK => write!(f, "Error generating preshared key."),
-            Self::ParseIP => write!(f, "Error parsing IP address."),
-            Self::ParseU16 => write!(f, "Error parsing integer."),
-            Self::ParseSubnet => write!(f, "Error parsing subnet."),
-            Self::U16Range => write!(f, "Error parsing integer."),
-            Self::TooFewIPs => write!(f, "Too few IPs in specified subnet."),
-            Self::UserCancel => write!(f, "User cancelled."),
-            Self::UserInput => write!(f, "Unable to interpret input."),
-            Self::UserPrompt => write!(f, "Encountered error at user prompt."),
-        }
-    }
+enum Color {
+    Cyan,
+    Green,
 }
 
 struct HostConfig {
@@ -84,76 +52,50 @@ impl PartialEq for HostPeer {
     }
 }
 
-fn check_and_create_conf_dir(dir_name: &str) -> Result<PathBuf, String> {
-    let time = time_now();
-    let path = path::Path::new(dir_name).join(time);
-
-    if let Err(e) = fs::DirBuilder::new().recursive(true).create(&path) {
-        println!("{}", e);
-        return Err(HzErr::DirErr.to_string());
-    }
-
-    Ok(path)
-}
-
-fn check_and_create_conf_file(
-    dir: &PathBuf,
-    file: &str,
-    text: &Secret<String>,
-) -> Result<String, String> {
-    let path = Path::new(dir).join(file);
-
-    if path.exists() {
-        return Err(HzErr::FileExists.to_string());
-    } else if fs::write(path, text.expose_secret()).is_err() {
-        return Err(HzErr::FileErr.to_string());
-    }
-
-    Ok(file.to_string())
-}
-
 fn create_config_files(
     config_text: &Secret<String>,
-    host_id: SocketAddrV4,
+    host_id: &SocketAddrV4,
 ) -> Result<(PathBuf, String), String> {
+    let time = time_now();
+    let dir_path = Path::new("haze_configs").join(time);
+
+    if let Err(e) = DirBuilder::new().recursive(true).create(&dir_path) {
+        println!("{}", e);
+        return Err("Error creating directory for config files.".to_string());
+    }
+
     let filename = host_id.ip().to_string().replace(".", "") + "-wg0.conf";
-    println!("{}", filename);
+    let path = Path::new(&dir_path).join(&filename);
+    if path.exists() {
+        return Err("Error: config file already exists.".to_string());
+    } else if fs::write(path, config_text.expose_secret()).is_err() {
+        return Err("Error writing to file.".to_string());
+    }
 
-    let dir = match check_and_create_conf_dir("haze_configs") {
-        Ok(d) => d,
-        Err(e) => return Err(e),
-    };
-
-    let file = match check_and_create_conf_file(&dir, &filename, &config_text) {
-        Ok(f) => f,
-        Err(e) => return Err(e),
-    };
-
-    Ok((dir, file))
+    Ok((dir_path, filename))
 }
 
 fn confirmation_display(host_configs: &[HostConfig]) -> Result<(), String> {
     for (i, host) in host_configs.iter().enumerate() {
-        println!("\n\n{:^80}", format!("[ Host {} ]", i + 1).bold());
+        println!("\n{:^80}", format!("[ Host {} ]", i + 1).bold());
         println!(
             "Public address: {:<48}Private address: {:<22}",
-            hl_one(&host.endpoint_addr),
-            hl_one(&host.priv_addr)
+            highlight(&host.endpoint_addr, &Color::Green),
+            highlight(&host.priv_addr, &Color::Green)
         );
         println!(
-            "Public key: {:<40}\nPrivate key: {:<40}",
-            hl_one(&host.pub_key),
-            hl_one(&"** Hidden** ")
+            "Public key: {:<40}",
+            highlight(&host.pub_key, &Color::Green),
         );
 
         for (i, peer) in host.peers.iter().enumerate() {
             println!("\n\t{}", format!("[ Peer {} ]", i + 1).bold());
             println!(
-                "\tPublic address: {:<40}Private address: {}\n\tPublic key: {:<40}\n\tPreshared key: {:<40}",
-                hl_two(&peer.endpoint_addr),
-                hl_two(&peer.priv_addr),
-                hl_two(&peer.pub_key),
-                hl_two(&"** Hidden **"));
+                "\tPublic address: {:<40}Private address: {}\n\tPublic key: {:<40}",
+                highlight(&peer.endpoint_addr, &Color::Cyan),
+                highlight(&peer.priv_addr, &Color::Cyan),
+                highlight(&peer.pub_key, &Color::Cyan),
+            );
         }
     }
     continue_prompt()
@@ -163,11 +105,11 @@ fn continue_prompt() -> Result<(), String> {
     if let Ok(response) = prompt_password_stdout("\nContinue? (y/n) ") {
         match &response.to_ascii_lowercase()[..1] {
             "y" => Ok(()),
-            "n" => Err(HzErr::UserCancel.to_string()),
-            _ => Err(HzErr::UserInput.to_string()),
+            "n" => Err("User cancelled.".to_string()),
+            _ => Err("Error interpreting input.".to_string()),
         }
     } else {
-        Err(HzErr::UserPrompt.to_string())
+        Err("Unknown input error.".to_string())
     }
 }
 
@@ -197,27 +139,24 @@ fn gen_config_text(host_conf: &HostConfig) -> Secret<String> {
 
 fn gen_host_configs(
     pub_ips: &[Ipv4Addr],
-    priv_subnet: Ipv4Net,
-    ports: String,
-    rand_ports: bool,
+    host_count: usize,
+    priv_addresses: &[Ipv4Addr],
+    ports: &[u16],
     keepalive: u16,
 ) -> Vec<HostConfig> {
-    let host_count = pub_ips.len();
-    let priv_addresses = ranges::enum_subnet(host_count, priv_subnet).unwrap();
     let host_keypairs = gen_x25519_keypairs(host_count).unwrap();
 
     let host_pair_count = ranges::peer_combos(host_count, 2).unwrap();
     let host_pair_psks = gen_preshared_keys(host_pair_count).unwrap();
 
-    let port_vec = ranges::enum_port_range(ports, rand_ports).unwrap();
-    let mut port_iter = port_vec.iter().cycle();
+    let mut port_iter = ports.iter().cycle();
 
     let mut hosts: Vec<HostConfig> = Vec::with_capacity(host_count);
-    for (i, j) in priv_addresses.into_iter().enumerate() {
+    for (i, j) in priv_addresses.iter().enumerate() {
         let this_port = port_iter.next().unwrap();
         hosts.push(HostConfig {
             endpoint_addr: SocketAddrV4::new(pub_ips[i], *this_port),
-            priv_addr: j,
+            priv_addr: *j,
             priv_key: host_keypairs[i].0.clone(),
             pub_key: host_keypairs[i].1.clone(),
             peers: Vec::new(),
@@ -268,7 +207,7 @@ fn gen_preshared_keys(host_pair_count: usize) -> Result<Vec<Secret<String>>, Str
     }
 
     if keys.is_empty() {
-        return Err(HzErr::GenPSK.to_string());
+        return Err("Error generating preshared keys.".to_string());
     }
     Ok(keys)
 }
@@ -287,19 +226,17 @@ fn gen_x25519_keypairs(host_count: usize) -> Result<Vec<(Secret<String>, String)
     }
 
     if keypairs.is_empty() {
-        return Err(HzErr::GenKeyPair.to_string());
+        return Err("Error generating keypairs.".to_string());
     }
     Ok(keypairs)
 }
 
-// Highlight color to help visually parse output
-fn hl_one<T: ToString>(item: &T) -> String {
-    format!("{}", item.to_string().green())
-}
-
-// Another highlight color to help visually parse output
-fn hl_two<T: ToString>(item: &T) -> String {
-    format!("{}", item.to_string().cyan())
+// Highlighter help visually parse output
+fn highlight<T: ToString>(item: &T, color: &Color) -> String {
+    match color {
+        Color::Green => format!("{}", item.to_string().green()),
+        Color::Cyan => format!("{}", item.to_string().cyan()),
+    }
 }
 
 fn time_now() -> String {
@@ -412,6 +349,7 @@ fn main() {
         process::exit(1);
     }
 
+    let host_count = pub_ips.len();
     let (pub_port, rand_port): (String, bool) = {
         if let Some(raw_port) = matches.value_of("wg_port") {
             if raw_port.parse::<u16>().is_ok() {
@@ -439,10 +377,24 @@ fn main() {
         }
     };
 
-    let priv_subnet: Ipv4Net = {
+    let port_range = match ranges::enum_port_range(&pub_port, rand_port) {
+        Ok(range) => range,
+        Err(e) => {
+            println!("{}", e);
+            process::exit(1)
+        }
+    };
+
+    let priv_addresses: Vec<Ipv4Addr> = {
         if let Some(raw_subnet) = matches.value_of("private_subnet") {
             if let Ok(subnet) = raw_subnet.parse() {
-                subnet
+                match ranges::enum_subnet(pub_ips.len(), subnet) {
+                    Ok(addresses) => addresses,
+                    Err(e) => {
+                        println!("{}", e);
+                        process::exit(1)
+                    }
+                }
             } else {
                 println!("Error parsing private subnet: {}", raw_subnet);
                 process::exit(1);
@@ -467,15 +419,19 @@ fn main() {
         }
     };
 
+    let mut confirm: bool = false;
+
     if matches.occurrences_of("private_subnet") == 0 {
         println!(
             "No private subnet specified. Using default: {}",
             "172.16.128.0/24".green()
         );
+        confirm = true;
     }
 
     if matches.occurrences_of("keepalive") == 0 {
         println!("No keepalive specified. Using default: {}", "0".green());
+        confirm = true;
     }
 
     if !(matches.is_present("wg_port")
@@ -486,14 +442,23 @@ fn main() {
             "No port or port range specified. Using default: {}",
             "51820".green()
         );
+        confirm = true;
     }
 
-    if let Err(e) = continue_prompt() {
-        println!("{}", e);
-        process::exit(1);
+    if confirm {
+        if let Err(e) = continue_prompt() {
+            println!("{}", e);
+            process::exit(1);
+        }
     }
 
-    let configs = gen_host_configs(&pub_ips, priv_subnet, pub_port, rand_port, keepalive);
+    let configs = gen_host_configs(
+        &pub_ips,
+        host_count,
+        &priv_addresses,
+        &port_range,
+        keepalive,
+    );
 
     if !matches.is_present("no_confirm") {
         if let Err(e) = confirmation_display(&configs) {
@@ -503,7 +468,7 @@ fn main() {
     }
 
     for config in &configs {
-        match create_config_files(&gen_config_text(config), config.endpoint_addr) {
+        match create_config_files(&gen_config_text(config), &config.endpoint_addr) {
             Ok((dir, file)) => println!("Created {} in {}", file, dir.display()),
             Err(e) => {
                 println!("{}", e);
