@@ -1,3 +1,4 @@
+use crate::ranges::exclude_addresses;
 use std::fs::{self, DirBuilder};
 use std::net::{Ipv4Addr, SocketAddrV4};
 use std::path::{Path, PathBuf};
@@ -245,7 +246,7 @@ fn time_now() -> String {
 fn main() {
     let matches = App::new("Haze")
         .version("0.1")
-        .author("Shane s. <elliptic@tachyon.cx>")
+        .author("Shane S. <elliptic@tachyon.cx>")
         .about("Generates configuration files for arbitrarily-sized WireGuard mesh networks.")
         .after_help("EXAMPLES:\
         \n\t./haze --endpoints=45.45.45.2,45.45.45.3 --port=51820 --subnet=10.0.0.0/24\
@@ -332,6 +333,19 @@ fn main() {
                 .required(false)
                 .validator(validate::is_keepalive),
         )
+        .arg(
+            Arg::with_name("excluded_ips")
+                .help("Specify excluded internal IP addresses")
+                .display_order(610)
+                .short("x")
+                .long("exclude")
+                .value_name("IP")
+                .multiple(true)
+                .required(false)
+                .require_equals(true)
+                .value_delimiter(",")
+                .validator(validate::is_ip),
+        )
         .get_matches();
 
     let mut pub_ips: Vec<Ipv4Addr> = Vec::new();
@@ -347,6 +361,18 @@ fn main() {
     } else {
         println!("Error encountered reading public IPs.");
         process::exit(1);
+    }
+
+    let mut excluded_ips: Vec<Ipv4Addr> = Vec::new();
+    if let Some(ex_addrs) = matches.values_of("excluded_ips") {
+        for raw_addr in ex_addrs {
+            if let Ok(clean_addr) = raw_addr.parse() {
+                excluded_ips.push(clean_addr);
+            } else {
+                println!("Error parsing address: {}", raw_addr);
+                process::exit(1);
+            }
+        }
     }
 
     let host_count = pub_ips.len();
@@ -385,10 +411,10 @@ fn main() {
         }
     };
 
-    let priv_addresses: Vec<Ipv4Addr> = {
+    let mut priv_addresses: Vec<Ipv4Addr> = {
         if let Some(raw_subnet) = matches.value_of("private_subnet") {
             if let Ok(subnet) = raw_subnet.parse() {
-                match ranges::enum_subnet(pub_ips.len(), subnet) {
+                match ranges::enum_subnet(pub_ips.len() + excluded_ips.len(), subnet) {
                     Ok(addresses) => addresses,
                     Err(e) => {
                         println!("{}", e);
@@ -404,6 +430,10 @@ fn main() {
             process::exit(1);
         }
     };
+
+    if !excluded_ips.is_empty() {
+        exclude_addresses(excluded_ips, &mut priv_addresses);
+    }
 
     let keepalive: u16 = {
         if let Some(raw_keepalive) = matches.value_of("keepalive") {

@@ -48,6 +48,17 @@ pub fn enum_subnet(host_count: usize, subnet: Ipv4Net) -> Result<Vec<Ipv4Addr>, 
     Ok(ip_addresses)
 }
 
+pub fn exclude_addresses(exclude: Vec<Ipv4Addr>, subnet: &mut Vec<Ipv4Addr>) {
+    for address in exclude {
+        match subnet.binary_search(&address) {
+            Ok(index) => {
+                subnet.remove(index);
+            }
+            Err(_) => continue,
+        }
+    }
+}
+
 // Today I learned that factorials overflow quickly.
 // Here's another way to calculate the number of combinations
 // without using factorials.

@@ -15,8 +15,8 @@ Given an arbitrary number of WireGuard hosts, Haze generates (rather, *will* gen
 - Tidy up and pay off debt accrued while battling the borrow checker
 - Expand on the tests for existing functions 
 - ~~Add option to randomize ports for hosts~~
-- Add option to exlude specific private IPs within the private subnet
-- Finish generating the fully-formed wg0.confs (currently prints the information to stdout)
+- ~~Add option to exclude specific private IPs within the private subnet~~
+- ~~Finish generating the fully-formed wg0.confs (currently prints the information to stdout)~~
 - Add option to encrypt the config files with a password
     - I'm thinking AES-256/PBKDF2-SHA3-512 (500K iterations)
     - Instead of encrypted_blob.txt, output a Python script with the ciphertext inline as a variable. Use python/cryptography to read in the ciphertext, salt, and encryption parameters. Then request a user password, derive the key, and decrypt directly to /etc/wg0.conf.
@@ -27,7 +27,7 @@ Given an arbitrary number of WireGuard hosts, Haze generates (rather, *will* gen
 user@workstation % ./haze --help
 
 Haze 0.1
-Shane s. <elliptic@tachyon.cx>
+Shane S. <elliptic@tachyon.cx>
 Generates configuration files for arbitrarily-sized WireGuard mesh networks.
 
 USAGE:
@@ -46,6 +46,7 @@ OPTIONS:
     -R, --random-port-range=<LPORT-HPORT>    Specify random external port range for WireGuard hosts.
     -s, --subnet=<ADDRESS/CIDR>              Internal subnet of WireGuard hosts [default: 172.16.128.0/24]
     -k, --keepalive=<keepalive>              Set a keepalive time (useful if behind NAT) [default: 0]
+    -x, --exclude=<IP>...                    Specify excluded internal IP addresses
 
 EXAMPLES:
 	./haze --endpoints=45.45.45.2,45.45.45.3 --port=51820 --subnet=10.0.0.0/24
